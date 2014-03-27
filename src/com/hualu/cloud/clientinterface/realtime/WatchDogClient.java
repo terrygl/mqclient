@@ -73,130 +73,138 @@ public class WatchDogClient extends TimerTask  {
 			logger.error("rabbitmq connection is fault");
 			return;
 		}
-		//create channel
-		try{
-		Channel channel = connection.createChannel();
-		if(channel==null){
-			logger.error("rabbitmq channel is fault ");
-			return ;
-		}
-		//declare a queue
-		channel.queueDeclare(QUEUE_NAME_REQUEST,false,false,false,null);
-		//decelare temp queue
-		String queueTemp = channel.queueDeclare().getQueue();
-		//declare message and set message format
-		//生成的消息队列名字
-		//完整的命令消息
-		//"queue name"+"@@"+"session"+"@@"+'?' 
-		//-------staticparameter.msgsplit
-		String message=queueTemp+"@@"+session+"@@"+hostname+"@@"+'?';
-		//send message
-		try{
-			channel.basicPublish("",QUEUE_NAME_REQUEST, null,message.getBytes() );
-			logger.error("发送心跳消息正常："+message);
-		}
-		catch(IOException e){
-			channel.close();
-			connection.close();
-			logger.error("心跳消息发送异常："+e.getMessage());
-		}
-		//receive message
-		long starttime=System.currentTimeMillis();				
-		while(true){//每十秒循环一次
-			GetResponse response=channel.basicGet(queueTemp,true);//获取消息
-			if(response==null){
+			try{
+				channel = connection.createChannel();
+				//declare a queue
+				int i0=channel.queueDeclare(QUEUE_NAME_REQUEST,false,false,false,null).getMessageCount();
+				if(i0>20){
+					channel.close();
+					connection.close();
+					logger.warn(QUEUE_NAME_REQUEST+"消息队列拥塞，现在消息个数为"+i0);
+					return;
+				}
+				logger.debug(QUEUE_NAME_REQUEST+"消息队列消息个数为"+i0);
+				//decelare temp queue
+				String queueTemp = channel.queueDeclare().getQueue();
+				//declare message and set message format
+				//生成的消息队列名字
+				//完整的命令消息
+				//"queue name"+"@@"+"session"+"@@"+'?' 
+				//-------staticparameter.msgsplit
+				String message=queueTemp+"@@"+session+"@@"+hostname+"@@"+'?';
+				//send message
 				try{
-					Thread.sleep(100);//如果没有消息，则休眠100毫秒后再获取消息
+					channel.basicPublish("",QUEUE_NAME_REQUEST, null,message.getBytes() );
+					logger.error("发送心跳消息正常："+message);
 				}
-				catch(Exception e){
-					logger.warn("心跳程序休眠时出现异常："+e.getMessage());
+				catch(IOException e){
+					channel.close();
+					connection.close();
+					logger.error("心跳消息发送异常："+e.getMessage());
 				}
-			}
-			else{
-				String responseMsg=new String(response.getBody());
-				logger.info("收到服务器端回复："+responseMsg+"xxx");
-				if(serverState==false){
-					if(CloudFactory.ssc!=null)
-						CloudFactory.ssc.heartbeatCheck("2");//服务器端从异常恢复为正常
-					logger.info("服务器恢复运行recover");
-				}
-				serverState=true;//server running
-				break;
-			}
-			
-			long endtime=System.currentTimeMillis();
-			//判断读取rabbitmq是否超时
-			//rabbitmq maybe down and test redis
-			if(endtime-starttime>CloudFactory.responseTimeout){//默认30秒无返回则表示超时
-				logger.warn("超过"+CloudFactory.responseTimeout+"毫秒没有收到服务器端的回复");
-				//队列超时，读取redis的MQSserver最新时间，更新MQSserver状态
-				String mqsIpStr = mdb.get("MQServers");//get mqserver ip address list
-				if(mqsIpStr==null){
-					logger.warn("redis has no key = MQServers，请核查后台服务是否运行、内存数据库是否运行、消息服务器是否正常运行！");
-					if(serverState==true){
-						if(CloudFactory.ssc!=null)
-							CloudFactory.ssc.heartbeatCheck("1");//服务器端从正常到异常
-						logger.warn("服务器运行出现故障，请核查后台服务是否运行、内存数据库是否运行、消息服务器是否正常运行！");
+				//receive message
+				long starttime=System.currentTimeMillis();				
+				while(true){//每十秒循环一次
+					GetResponse response;
+					try{
+						response=channel.basicGet(queueTemp,true);//获取消息
+					}catch(Exception e){
+						logger.error("读取消息失败",e);
+						break;
 					}
-					serverState=false;
-					return ;
-				}
-				else if(mqsIpStr=="ERRORERROR"){
-					if(serverState==true){
-						if(CloudFactory.ssc!=null)
-							CloudFactory.ssc.heartbeatCheck("1");//服务器端从正常到异常
-						logger.warn("服务器运行出现故障，请核查后台服务是否运行、内存数据库是否运行、消息服务器是否正常运行！");
-					}
-					serverState=false;
-					logger.warn("redis get key = MQServers false，ERRORERROR。请核查后台服务是否运行、内存数据库是否运行、消息服务器是否正常运行！");
-					return ;
-				}
-				String[]mqsIpList =   mqsIpStr.split(";");
-				int mIpNum = mqsIpList.length;
-				boolean mqsState  = false;
-				String mqsRunStr = null;
-				int i=0;
-				while(i<mIpNum){
-					String mqsTimeKey = "MQS:"+mqsIpList[i];
-					String mqsTime = mdb.get(mqsTimeKey);
-					long timeStamp = Long.parseLong(mqsTime);
-					if(endtime-timeStamp<pulseTimeout){//MQServer running normal 
-						mqsState = true;
-						mqsRunStr=mqsRunStr+mqsIpList[i]+":";//set running mqservers ip
-					}
-					i++;
-				}
-				if(mqsRunStr!=null){
-					//write mqsRunStr to readis
-					mdb.add("MQSRunnig", mqsRunStr);
-				}
-				if(serverState!=mqsState){
-					//use callback
-					//------circulation continue------
-					ServerStatusCallBack callback= CloudFactory.ssc;
-					if(mqsState){
-						if(CloudFactory.ssc!=null)
-							callback.heartbeatCheck("2");//恢复正常
-						logger.info("后台服务恢复正常运行，recover");
+					if(response==null){
+						try{
+							Thread.sleep(100);//如果没有消息，则休眠100毫秒后再获取消息
+						}
+						catch(Exception e){
+							logger.warn("心跳程序休眠时出现异常："+e.getMessage());
+						}
 					}
 					else{
-						if(CloudFactory.ssc!=null)
-							callback.heartbeatCheck("1");//出现异常
-						logger.info("后台服务出现存查还能，请核查消息服务器和后台服务，exception");
+						String responseMsg=new String(response.getBody());
+						logger.info("收到服务器端回复："+responseMsg+"xxx");
+						if(serverState==false){
+							if(CloudFactory.ssc!=null)
+								CloudFactory.ssc.heartbeatCheck("2");//服务器端从异常恢复为正常
+							logger.info("服务器恢复运行recover");
+						}
+						serverState=true;//server running
+						break;
 					}
-					serverState = mqsState;
-				}				
-				//队列超时后，检测一遍后退出
-				break;//中断循环，退出接收
+					
+					long endtime=System.currentTimeMillis();
+					//判断读取rabbitmq是否超时
+					//rabbitmq maybe down and test redis
+					if(endtime-starttime>CloudFactory.responseTimeout){//默认30秒无返回则表示超时
+						logger.warn("超过"+CloudFactory.responseTimeout+"毫秒没有收到服务器端的回复");
+						//队列超时，读取redis的MQSserver最新时间，更新MQSserver状态
+						String mqsIpStr = mdb.get("MQServers");//get mqserver ip address list
+						if(mqsIpStr==null){
+							logger.warn("redis has no key = MQServers，请核查后台服务是否运行、内存数据库是否运行、消息服务器是否正常运行！");
+							if(serverState==true){
+								if(CloudFactory.ssc!=null)
+									CloudFactory.ssc.heartbeatCheck("1");//服务器端从正常到异常
+								logger.warn("服务器运行出现故障，请核查后台服务是否运行、内存数据库是否运行、消息服务器是否正常运行！");
+							}
+							serverState=false;
+							return ;
+						}
+						else if(mqsIpStr=="ERRORERROR"){
+							if(serverState==true){
+								if(CloudFactory.ssc!=null)
+									CloudFactory.ssc.heartbeatCheck("1");//服务器端从正常到异常
+								logger.warn("服务器运行出现故障，请核查后台服务是否运行、内存数据库是否运行、消息服务器是否正常运行！");
+							}
+							serverState=false;
+							logger.warn("redis get key = MQServers false，ERRORERROR。请核查后台服务是否运行、内存数据库是否运行、消息服务器是否正常运行！");
+							return ;
+						}
+						String[]mqsIpList =   mqsIpStr.split(";");
+						int mIpNum = mqsIpList.length;
+						boolean mqsState  = false;
+						String mqsRunStr = null;
+						int i=0;
+						while(i<mIpNum){
+							String mqsTimeKey = "MQS:"+mqsIpList[i];
+							String mqsTime = mdb.get(mqsTimeKey);
+							long timeStamp = Long.parseLong(mqsTime);
+							if(endtime-timeStamp<pulseTimeout){//MQServer running normal 
+								mqsState = true;
+								mqsRunStr=mqsRunStr+mqsIpList[i]+":";//set running mqservers ip
+							}
+							i++;
+						}
+						if(mqsRunStr!=null){
+							//write mqsRunStr to readis
+							mdb.add("MQSRunnig", mqsRunStr);
+						}
+						if(serverState!=mqsState){
+							//use callback
+							//------circulation continue------
+							ServerStatusCallBack callback= CloudFactory.ssc;
+							if(mqsState){
+								if(CloudFactory.ssc!=null)
+									callback.heartbeatCheck("2");//恢复正常
+								logger.info("后台服务恢复正常运行，recover");
+							}
+							else{
+								if(CloudFactory.ssc!=null)
+									callback.heartbeatCheck("1");//出现异常
+								logger.info("后台服务出现存查还能，请核查消息服务器和后台服务，exception");
+							}
+							serverState = mqsState;
+						}				
+						//队列超时后，检测一遍后退出
+						break;//中断循环，退出接收
+					}
+				}
+				channel.queueDelete(queueTemp);//删除消息队列
+				channel.close();//关闭响应消息通道
+				connection.close();//关闭通道连接
+			}catch(Exception e){
+				logger.error("心跳消息发送异常：",e);
 			}
-		}
-		channel.queueDelete(queueTemp);//删除消息队列
-		channel.close();//关闭响应消息通道
-		}
-		catch(Exception e){
-			logger.error("创建消息通道失败");
-		}
-		connection.close();//关闭通道连接
+
 	}
 
 	private void initializeRedis(String str){

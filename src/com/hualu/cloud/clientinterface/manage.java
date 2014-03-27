@@ -46,6 +46,7 @@ import com.hualu.cloud.simulation.tt;
 import com.rabbitmq.client.Channel;
 import com.rabbitmq.client.Connection;
 import com.rabbitmq.client.ConnectionFactory;
+import com.rabbitmq.client.MessageProperties;
 
 public class manage {
 	public static void main(String args[]) throws IOException{
@@ -68,12 +69,12 @@ public class manage {
 		System.out.println("9:测试MQServer状态跳变");
 		System.out.println("10:准备预警、特殊车辆、卡口监控数据");
 		System.out.println("11:从内存数据库获取现存的预警、特殊车辆、卡口监控数据");
+		System.out.println("99:模拟消息");
 		int i=0;
-//		if(args.length==0)
-//			return ;
-//		else
-//			i=Integer.parseInt(args[0]);
-		i=1001;
+		if(args.length==0)
+			return ;
+		else
+			i=Integer.parseInt(args[0]);
 		switch(i){
 		case 1000:
 			CloudFactory cf1=new CloudFactory();
@@ -83,10 +84,14 @@ public class manage {
 			cf1.addListener(rta1);
 			tp tp1=new tp();
 			cf1.addListener(tp1);
-			tt tt1=new tt();
-			cf1.addListener(tt1);
 			ssc ssc1=new ssc();
 			cf1.addListener(ssc1);
+			tt tt1=new tt();
+			cf1.addListener(tt1);
+			if(CloudFactory.ssc==null)
+				System.out.println("心跳接口ssc is null");
+			else
+				System.out.println("心跳接口ssc is OK");
 			break;
 		case 1001:
 			CloudFactory cf2=new CloudFactory();
@@ -148,6 +153,9 @@ public class manage {
 			break;
 		case 11://从获取内存数据库现存的预警、特殊车辆、卡口监控数据
 			testsync();	
+			break;
+		case 99:
+			producemsg();
 			break;
 		default:
 			System.out.println("请输入选项");
@@ -381,7 +389,7 @@ public class manage {
 				System.out.println(System.currentTimeMillis());
 				a.layout(bean, queryInfo);//调用该方法就会发送相关命令消息
 				System.out.println("调用执行完毕:"+System.currentTimeMillis());
-				Thread.sleep(30000);
+				//Thread.sleep(30000);
 
 		} catch (Exception e) {
 			// TODO Auto-generated catch block
@@ -677,5 +685,37 @@ public class manage {
 				money=money-6500;
 			System.out.println("第"+i+"年  总额："+money+" 息"+zx);
 		}
-	}	
+	}
+	static void producemsg(){
+        Connection connection = queueList.getConnection();
+
+        try {
+            Channel channel = connection.createChannel();
+            channel.exchangeDeclare("warnExchange2", "topic");
+            String message = "GJtest1234567890";
+            for(int i=0;i<1000;i++){
+            	message = "GJtest1234567890";
+            	channel.basicPublish("warnExchange2", "GJ",
+			                MessageProperties.PERSISTENT_TEXT_PLAIN, message.getBytes());
+            	message = "YJtest1234567890";
+            	channel.basicPublish("warnExchange2", "YJ",
+				               MessageProperties.PERSISTENT_TEXT_PLAIN, message.getBytes());
+             	channel.basicPublish("warnExchange2", "yj",
+			               MessageProperties.PERSISTENT_TEXT_PLAIN, message.getBytes());
+            	try{
+            		Thread.sleep(100);
+            	}catch(Exception e){
+            		
+            	}
+            }
+			channel.close();
+	        connection.close();
+		} catch (IOException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
+
+
+		
+	}
 }

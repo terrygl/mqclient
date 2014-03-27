@@ -1,4 +1,4 @@
-﻿package com.hualu.cloud.clientinterface.realtime;
+package com.hualu.cloud.clientinterface.realtime;
 
 import java.util.ArrayList;
 import java.util.Iterator;
